@@ -18,6 +18,7 @@ NC='\033[0m' # 无颜色
 LOG_DIR="$HOME/.encrypted_contract_logs"
 LOG_FILE="$LOG_DIR/$(date +%Y%m%d_%H%M%S)_execution.log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL="https://github.com/SeismicSystems/try-devnet.git"
 PROJECT_DIR="try-devnet"
 
 # 创建日志目录
@@ -126,28 +127,42 @@ install_bun() {
     fi
 }
 
+# 克隆仓库
+clone_repository() {
+    log_message "开始克隆仓库..." "INFO"
+    
+    # 检查是否已经存在项目目录
+    if [ -d "$PROJECT_DIR" ]; then
+        log_message "项目目录'$PROJECT_DIR'已存在" "INFO"
+        read -p "是否要重新克隆仓库？这将删除现有目录 (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm -rf "$PROJECT_DIR"
+        else
+            log_message "使用现有项目目录" "INFO"
+            return 0
+        fi
+    fi
+    
+    # 克隆仓库及其子模块
+    log_message "正在克隆仓库及其子模块..." "INFO"
+    git clone --recurse-submodules "$REPO_URL" "$PROJECT_DIR" >> "$LOG_FILE" 2>&1 || handle_error 10 "无法克隆仓库" true
+    
+    log_message "仓库克隆成功" "SUCCESS"
+}
+
 # 安装Node依赖
 install_dependencies() {
     log_message "开始安装Node依赖..." "INFO"
     
-    # 确保项目目录存在
+    # 进入正确的项目目录
     if [ ! -d "$PROJECT_DIR" ]; then
-        log_message "项目目录'$PROJECT_DIR'不存在，请确保您在正确的位置运行此脚本" "WARNING"
-        
-        # 询问用户是否要克隆存储库
-        read -p "是否要克隆项目存储库？(y/n): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            log_message "请输入仓库地址:" "INFO"
-            read repo_url
-            git clone "$repo_url" "$PROJECT_DIR" || handle_error 4 "无法克隆存储库" true
-        else
-            handle_error 4 "缺少项目目录，无法继续" true
-        fi
+        log_message "项目目录'$PROJECT_DIR'不存在，将尝试克隆仓库" "WARNING"
+        clone_repository
     fi
     
-    # 进入CLI目录
-    cd "$PROJECT_DIR/packages/cli/" || handle_error 5 "无法进入CLI目录" true
+    # 进入contract目录
+    cd "$PROJECT_DIR/packages/contract/" || handle_error 5 "无法进入contract目录" true
     
     # 安装依赖
     log_message "正在安装依赖项..." "INFO"
@@ -161,9 +176,23 @@ install_dependencies() {
 send_transactions() {
     log_message "开始发送交易..." "INFO"
     
+    # 确保我们在正确的目录中
+    if [[ "$PWD" != *"$PROJECT_DIR/packages/contract"* ]]; then
+        cd "$PROJECT_DIR/packages/contract/" || handle_error 5 "无法进入contract目录" true
+    fi
+    
     # 检查脚本是否存在
     if [ ! -f "script/transact.sh" ]; then
-        handle_error 7 "交易脚本不存在 (script/transact.sh)" true
+        log_message "在当前目录未找到交易脚本" "WARNING"
+        # 尝试查找脚本
+        local script_path=$(find "$PROJECT_DIR" -name "transact.sh" 2>/dev/null | head -n 1)
+        
+        if [ -n "$script_path" ]; then
+            log_message "找到交易脚本: $script_path" "INFO"
+            cd "$(dirname "$script_path")/.." || handle_error 8 "无法切换到脚本所在目录" true
+        else
+            handle_error 7 "交易脚本不存在 (script/transact.sh)" true
+        fi
     fi
     
     # 添加可执行权限
@@ -280,7 +309,7 @@ process_args() {
 # 主函数
 main() {
     local start_time=$(date +%s)
-    local total_steps=4
+    local total_steps=5  # 增加了一个步骤
     local current_step=0
     
     log_message "加密合约交互自动化脚本开始执行" "INFO"
@@ -290,6 +319,11 @@ main() {
     current_step=$((current_step + 1))
     show_progress "$current_step" "$total_steps" "检查系统环境"
     check_environment
+    
+    # 克隆仓库
+    current_step=$((current_step + 1))
+    show_progress "$current_step" "$total_steps" "克隆仓库"
+    clone_repository
     
     # 安装Bun
     if [ "$SKIP_BUN" != true ]; then
