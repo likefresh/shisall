@@ -522,6 +522,7 @@ if [ $? -ne 0 ]; then
     # 询问用户是否编译GLIBC
     if ! $AUTO_CONFIRM; then
         echo -e "${YELLOW}编译GLIBC需要较长时间（约20-40分钟）。${NC}"
+        echo -e "${YELLOW}画面会疯狂加载，不要有任何按键操作！！！。${NC}"
         read -p "是否继续编译GLIBC? (y/n): " confirm
         if [[ ! $confirm =~ ^[Yy]$ ]]; then
             echo -e "${RED}中止GLIBC编译，将尝试其他部署方式。${NC}"
