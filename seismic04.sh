@@ -417,12 +417,12 @@ check_status "进入安装目录" "critical"
 log "INFO" "开始部署过程，安装目录: $INSTALL_DIR"
 
 # 检查网络连接
-check_network
-if [ $? -ne 0 ]; then
-    echo -e "${RED}${BOLD}网络连接失败，请检查网络设置后重试。${NC}"
-    SUCCESS=false
-    cleanup
-fi
+# check_network
+# if [ $? -ne 0 ]; then
+#     echo -e "${RED}${BOLD}网络连接失败，请检查网络设置后重试。${NC}"
+#     SUCCESS=false
+#     cleanup
+# fi
 
 # 1. 检查系统库版本
 update_step "检查系统库版本"
@@ -433,22 +433,6 @@ if $USE_DOCKER; then
 else
     check_system_libraries
     SYSTEM_LIBS_OK=$?
-    
-    if [ $SYSTEM_LIBS_OK -ne 0 ]; then
-        echo -e "${YELLOW}系统库检查不通过，将尝试使用Docker作为备选方案。${NC}"
-        
-        if ! $AUTO_CONFIRM; then
-            read -p "是否继续使用Docker进行部署？(y/n): " confirm
-            if [[ ! $confirm =~ ^[Yy]$ ]]; then
-                echo -e "${RED}操作已取消。${NC}"
-                SUCCESS=false
-                cleanup
-            fi
-        fi
-        
-        setup_docker_fallback
-        USE_DOCKER=true
-    fi
 fi
 
 if $USE_DOCKER; then
