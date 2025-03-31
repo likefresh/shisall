@@ -90,9 +90,9 @@ check_environment() {
     fi
     
     # 检查网络连接
-    if ! ping -c 1 google.com &> /dev/null && ! ping -c 1 baidu.com &> /dev/null; then
-        handle_error 2 "网络连接不可用，请检查您的网络设置" true
-    fi
+    # if ! ping -c 1 google.com &> /dev/null && ! ping -c 1 baidu.com &> /dev/null; then
+    #     handle_error 2 "网络连接不可用，请检查您的网络设置" true
+    # fi
     
     log_message "环境检查完成" "SUCCESS"
 }
