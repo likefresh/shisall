@@ -23,6 +23,7 @@ SUCCESS=true
 DEPENDENCIES_INSTALLED=0
 TOTAL_STEPS=7
 CURRENT_STEP=0
+USE_DOCKER=false  # 默认使用Docker模式
 
 # 函数: 显示进度条
 show_progress() {
@@ -346,7 +347,6 @@ trap 'cleanup interrupt' INT TERM
 # 解析命令行参数
 AUTO_CONFIRM=false
 SHOW_PROGRESS=true
-USE_DOCKER=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -531,55 +531,96 @@ else
     echo -e "${YELLOW}正在运行sfoundryup，这可能需要5-60分钟，请耐心等待...${NC}"
     echo -e "${YELLOW}(注意: 在98%时可能会停顿较长时间，属于正常现象)${NC}"
 
-    # 创建一个临时脚本来运行sfoundryup并捕获其输出
-    cat > run_sfoundryup.sh << 'EOF'
-#!/bin/bash
-set +e  # 不退出出错
-if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
-    "$HOME/.seismic/bin/sfoundryup" 2>&1 | tee sfoundryup_output.log
-else
-    sfoundryup 2>&1 | tee sfoundryup_output.log
-fi
+    # 创建一个函数来运行sfoundryup并处理特定错误
+    run_sfoundryup_safely() {
+        # 保存当前目录
+        local current_dir=$(pwd)
+        
+        # 运行sfoundryup并捕获输出
+        local output
+        if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
+            output=$("$HOME/.seismic/bin/sfoundryup" 2>&1)
+        else
+            output=$(sfoundryup 2>&1)
+        fi
+        
+        local exit_code=$?
+        
+        # 输出日志以便调试
+        echo "$output" >> "$LOG_FILE"
+        echo "$output"
+        
+        # 检查是否是文件移动错误
+        if echo "$output" | grep -q "mv: 'target/release/sanvil' and '/root/.seismic/bin/sanvil' are the same file"; then
+            log "WARN" "检测到文件移动错误，尝试手动处理..."
+            
+            # 检查sanvil是否存在
+            if [ -f "/root/.seismic/bin/sanvil" ]; then
+                log "INFO" "sanvil文件已存在，跳过移动步骤。"
+                return 0
+            else
+                log "WARN" "无法找到sanvil，尝试手动复制..."
+                
+                # 尝试从编译目录手动复制
+                if [ -f "target/release/sanvil" ]; then
+                    cp -f "target/release/sanvil" "/root/.seismic/bin/"
+                    if [ $? -eq 0 ]; then
+                        log "INFO" "成功手动复制sanvil文件。"
+                        chmod +x "/root/.seismic/bin/sanvil"
+                        return 0
+                    else
+                        log "ERROR" "手动复制sanvil文件失败。"
+                        return 1
+                    fi
+                else
+                    log "ERROR" "找不到源sanvil文件。"
+                    return 1
+                fi
+            fi
+        fi
+        
+        # 对于其他错误，返回原始退出代码
+        return $exit_code
+    }
 
-# 检查输出，看是否只有文件移动错误
-if grep -q "mv: 'target/release/sanvil' and '/root/.seismic/bin/sanvil' are the same file" sfoundryup_output.log; then
-    # 如果存在目标文件，我们认为这是非关键错误
-    if [ -f "$HOME/.seismic/bin/sanvil" ]; then
-        echo "检测到文件移动错误，但sanvil文件已存在，继续执行..."
-        exit 0
-    fi
-fi
-
-# 检查sanvil是否存在，即使有错误
-if [ -f "$HOME/.seismic/bin/sanvil" ]; then
-    exit 0
-else
-    # 真正的错误，退出非零状态
-    exit 1
-fi
-EOF
-
-    chmod +x run_sfoundryup.sh
-    ./run_sfoundryup.sh
-
+    # 运行安全版本的sfoundryup
+    run_sfoundryup_safely
     if [ $? -ne 0 ]; then
-        log "ERROR" "运行sfoundryup失败，无法继续。"
-        check_status "运行sfoundryup" "critical"
+        log "WARN" "使用系统环境运行sfoundryup失败，将尝试使用Docker..."
+        echo -e "${YELLOW}使用系统环境运行sfoundryup失败，将尝试使用Docker...${NC}"
+        USE_DOCKER=true
     else
         log "INFO" "sfoundryup运行完成。"
-        # 检查是否已安装sanvil工具
-        if [ -f "$HOME/.seismic/bin/sanvil" ]; then
-            log "INFO" "sanvil工具已安装在: $HOME/.seismic/bin/sanvil"
-        else
-            log "ERROR" "无法找到sanvil工具，安装可能不完整。"
-            check_status "验证sanvil安装" "critical"
-        fi
     fi
 
-    # 清理临时文件
-    rm -f run_sfoundryup.sh sfoundryup_output.log
+    # 如果强制使用Docker，则跳过后续步骤直接进入Docker流程
+    if $USE_DOCKER; then
+        log "INFO" "即将使用Docker部署..."
+        # 返回安装目录
+        cd "$INSTALL_DIR"
+        
+        # 清理现有进度
+        CURRENT_STEP=2  # 重置步骤计数器
+        
+        # 设置Docker环境
+        update_step "设置Docker环境"
+        setup_docker_fallback
+        
+        # 在Docker中部署
+        update_step "在Docker中部署"
+        deploy_in_docker
+        
+        # 显示100%进度
+        show_progress 100 "Docker部署完成！"
+        echo -e "\n\n${GREEN}${BOLD}全部步骤已完成!${NC}\n"
+        
+        # 显示执行报告并退出
+        cleanup
+        exit 0
+    fi
 
-    log "INFO" "sfoundryup配置已完成。"
+    # 如果不使用Docker，继续普通流程
+    log "INFO" "sfoundryup运行完成。"
 
     # 6. 克隆代码仓库
     update_step "克隆代码仓库"
