@@ -269,12 +269,12 @@ check_status "进入安装目录" "critical"
 log "INFO" "开始部署过程，安装目录: $INSTALL_DIR"
 
 # 检查网络连接
-check_network
-if [ $? -ne 0 ]; then
-    echo -e "${RED}${BOLD}网络连接失败，请检查网络设置后重试。${NC}"
-    SUCCESS=false
-    cleanup
-fi
+# check_network
+# if [ $? -ne 0 ]; then
+#     echo -e "${RED}${BOLD}网络连接失败，请检查网络设置后重试。${NC}"
+#     SUCCESS=false
+#     cleanup
+# fi
 
 # 1. 安装Rust
 update_step "安装Rust"
