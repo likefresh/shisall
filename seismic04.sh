@@ -531,40 +531,55 @@ else
     echo -e "${YELLOW}正在运行sfoundryup，这可能需要5-60分钟，请耐心等待...${NC}"
     echo -e "${YELLOW}(注意: 在98%时可能会停顿较长时间，属于正常现象)${NC}"
 
-    # 使用完整路径运行sfoundryup
-    if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
-        # 添加错误处理，忽略特定的移动错误
-        "$HOME/.seismic/bin/sfoundryup" || {
-            # 检查是否是文件已存在的错误
-            if [ $? -eq 1 ] && [ -f "$HOME/.seismic/bin/sanvil" ]; then
-                log "WARN" "忽略sanvil文件移动错误，文件已存在，继续执行..."
-                echo -e "${YELLOW}忽略sanvil文件移动错误，文件已存在，继续执行...${NC}"
-            else
-                # 如果是其他错误，则失败
-                check_status "运行sfoundryup" "critical"
-            fi
-        }
+    # 创建一个临时脚本来运行sfoundryup并捕获其输出
+    cat > run_sfoundryup.sh << 'EOF'
+#!/bin/bash
+set +e  # 不退出出错
+if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
+    "$HOME/.seismic/bin/sfoundryup" 2>&1 | tee sfoundryup_output.log
+else
+    sfoundryup 2>&1 | tee sfoundryup_output.log
+fi
+
+# 检查输出，看是否只有文件移动错误
+if grep -q "mv: 'target/release/sanvil' and '/root/.seismic/bin/sanvil' are the same file" sfoundryup_output.log; then
+    # 如果存在目标文件，我们认为这是非关键错误
+    if [ -f "$HOME/.seismic/bin/sanvil" ]; then
+        echo "检测到文件移动错误，但sanvil文件已存在，继续执行..."
+        exit 0
+    fi
+fi
+
+# 检查sanvil是否存在，即使有错误
+if [ -f "$HOME/.seismic/bin/sanvil" ]; then
+    exit 0
+else
+    # 真正的错误，退出非零状态
+    exit 1
+fi
+EOF
+
+    chmod +x run_sfoundryup.sh
+    ./run_sfoundryup.sh
+
+    if [ $? -ne 0 ]; then
+        log "ERROR" "运行sfoundryup失败，无法继续。"
+        check_status "运行sfoundryup" "critical"
     else
-        # 如果找不到sfoundryup，尝试通过PATH运行
-        if command -v sfoundryup &> /dev/null; then
-            # 添加相同的错误处理
-            sfoundryup || {
-                # 检查是否是文件已存在的错误
-                if [ $? -eq 1 ] && [ -f "$HOME/.seismic/bin/sanvil" ]; then
-                    log "WARN" "忽略sanvil文件移动错误，文件已存在，继续执行..."
-                    echo -e "${YELLOW}忽略sanvil文件移动错误，文件已存在，继续执行...${NC}"
-                else
-                    # 如果是其他错误，则失败
-                    check_status "运行sfoundryup" "critical"
-                fi
-            }
+        log "INFO" "sfoundryup运行完成。"
+        # 检查是否已安装sanvil工具
+        if [ -f "$HOME/.seismic/bin/sanvil" ]; then
+            log "INFO" "sanvil工具已安装在: $HOME/.seismic/bin/sanvil"
         else
-            log "ERROR" "无法找到sfoundryup命令，请确保安装成功。"
-            check_status "查找sfoundryup命令" "critical"
+            log "ERROR" "无法找到sanvil工具，安装可能不完整。"
+            check_status "验证sanvil安装" "critical"
         fi
     fi
 
-    log "INFO" "sfoundryup运行完成。"
+    # 清理临时文件
+    rm -f run_sfoundryup.sh sfoundryup_output.log
+
+    log "INFO" "sfoundryup配置已完成。"
 
     # 6. 克隆代码仓库
     update_step "克隆代码仓库"
