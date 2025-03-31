@@ -112,10 +112,10 @@ check_dependency() {
     fi
 }
 
-# 函数: 检查网络连接
+# 函数: 检查网络连接 - 已修改为使用curl而非ping
 check_network() {
     log "INFO" "检查网络连接..."
-    if ping -c 1 github.com &> /dev/null; then
+    if curl -s --head --request GET https://github.com | grep "HTTP/" > /dev/null; then
         log "INFO" "网络连接正常。"
         return 0
     else
@@ -246,14 +246,14 @@ echo -e "6. 部署加密合约"
 echo
 
 # 确认开始
-# if ! $AUTO_CONFIRM; then
-#     echo -e "${YELLOW}准备开始安装和部署过程，此操作可能需要较长时间。${NC}"
-#     read -p "是否继续？(y/n): " confirm
-#     if [[ ! $confirm =~ ^[Yy]$ ]]; then
-#         echo -e "${RED}操作已取消。${NC}"
-#         exit 0
-#     fi
-# fi
+if ! $AUTO_CONFIRM; then
+    echo -e "${YELLOW}准备开始安装和部署过程，此操作可能需要较长时间。${NC}"
+    read -p "是否继续？(y/n): " confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo -e "${RED}操作已取消。${NC}"
+        exit 0
+    fi
+fi
 
 # 检查并创建安装目录
 if [ ! -d "$INSTALL_DIR" ]; then
@@ -332,13 +332,17 @@ else
          "https://api.github.com/repos/SeismicSystems/seismic-foundry/contents/sfoundryup/install?ref=seismic" | bash
     check_status "下载并安装sfoundryup" "critical"
     
-    # 加载环境变量
-    source ~/.bashrc
-    check_status "加载环境变量" "warn"
+    # 直接添加路径到当前PATH环境变量
+    export PATH="$HOME/.seismic/bin:$PATH"
+    check_status "设置PATH环境变量" "warn"
     
     # 验证安装
-    sfoundryup --version 2>/dev/null || echo "sfoundryup已安装但无版本信息"
-    check_status "验证sfoundryup安装" "critical"
+    if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
+        log "INFO" "sfoundryup已安装在: $HOME/.seismic/bin/sfoundryup"
+    else
+        log "ERROR" "无法找到sfoundryup可执行文件"
+        check_status "验证sfoundryup安装" "critical"
+    fi
     
     log "INFO" "sfoundryup安装完成。"
 fi
@@ -350,9 +354,20 @@ log "INFO" "开始运行sfoundryup..."
 echo -e "${YELLOW}正在运行sfoundryup，这可能需要5-60分钟，请耐心等待...${NC}"
 echo -e "${YELLOW}(注意: 在98%时可能会停顿较长时间，属于正常现象)${NC}"
 
-# 运行sfoundryup
-sfoundryup
-check_status "运行sfoundryup" "critical"
+# 使用完整路径运行sfoundryup
+if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
+    "$HOME/.seismic/bin/sfoundryup"
+    check_status "运行sfoundryup" "critical"
+else
+    # 如果找不到sfoundryup，尝试通过PATH运行
+    if command -v sfoundryup &> /dev/null; then
+        sfoundryup
+        check_status "运行sfoundryup" "critical"
+    else
+        log "ERROR" "无法找到sfoundryup命令，请确保安装成功。"
+        check_status "查找sfoundryup命令" "critical"
+    fi
+fi
 
 log "INFO" "sfoundryup运行完成。"
 
