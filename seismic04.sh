@@ -533,13 +533,31 @@ else
 
     # 使用完整路径运行sfoundryup
     if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
-        "$HOME/.seismic/bin/sfoundryup"
-        check_status "运行sfoundryup" "critical"
+        # 添加错误处理，忽略特定的移动错误
+        "$HOME/.seismic/bin/sfoundryup" || {
+            # 检查是否是文件已存在的错误
+            if [ $? -eq 1 ] && [ -f "$HOME/.seismic/bin/sanvil" ]; then
+                log "WARN" "忽略sanvil文件移动错误，文件已存在，继续执行..."
+                echo -e "${YELLOW}忽略sanvil文件移动错误，文件已存在，继续执行...${NC}"
+            else
+                # 如果是其他错误，则失败
+                check_status "运行sfoundryup" "critical"
+            fi
+        }
     else
         # 如果找不到sfoundryup，尝试通过PATH运行
         if command -v sfoundryup &> /dev/null; then
-            sfoundryup
-            check_status "运行sfoundryup" "critical"
+            # 添加相同的错误处理
+            sfoundryup || {
+                # 检查是否是文件已存在的错误
+                if [ $? -eq 1 ] && [ -f "$HOME/.seismic/bin/sanvil" ]; then
+                    log "WARN" "忽略sanvil文件移动错误，文件已存在，继续执行..."
+                    echo -e "${YELLOW}忽略sanvil文件移动错误，文件已存在，继续执行...${NC}"
+                else
+                    # 如果是其他错误，则失败
+                    check_status "运行sfoundryup" "critical"
+                fi
+            }
         else
             log "ERROR" "无法找到sfoundryup命令，请确保安装成功。"
             check_status "查找sfoundryup命令" "critical"
