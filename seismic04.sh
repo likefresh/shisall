@@ -23,7 +23,6 @@ SUCCESS=true
 DEPENDENCIES_INSTALLED=0
 TOTAL_STEPS=7
 CURRENT_STEP=0
-USE_DOCKER=false  # 默认使用Docker模式
 
 # 函数: 显示进度条
 show_progress() {
@@ -347,6 +346,7 @@ trap 'cleanup interrupt' INT TERM
 # 解析命令行参数
 AUTO_CONFIRM=false
 SHOW_PROGRESS=true
+USE_DOCKER=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -435,217 +435,44 @@ else
     SYSTEM_LIBS_OK=$?
 fi
 
-if $USE_DOCKER; then
-    # 如果使用Docker，部署流程会有所不同
-    # 2. 设置Docker环境
-    update_step "设置Docker环境"
-    setup_docker_fallback
+# 将这段代码添加到原脚本中的合适位置，例如在检查GLIBC版本后
+if [ $? -ne 0 ]; then
+    # GLIBC版本不满足要求
+    echo -e "${YELLOW}检测到系统GLIBC版本过低，需要编译安装更高版本的GLIBC。${NC}"
     
-    # 3. 在Docker中部署
-    update_step "在Docker中部署"
-    deploy_in_docker
-    
-    # 显示100%进度
-    show_progress 100 "Docker部署完成！"
-    echo -e "\n\n${GREEN}${BOLD}全部步骤已完成!${NC}\n"
-    
-    # 显示执行报告
-    cleanup
-else
-    # 正常流程继续
-    # 2. 安装Rust
-    update_step "安装Rust"
-    log "INFO" "开始安装Rust..."
-
-    if check_dependency rustc && check_dependency cargo; then
-        log "INFO" "Rust已安装，跳过安装步骤。"
-    else
-        echo -e "${YELLOW}正在安装Rust，这可能需要几分钟...${NC}"
-        curl https://sh.rustup.rs -sSf | sh -s -- -y
-        check_status "下载并安装Rust" "critical"
-        
-        # 刷新环境变量
-        source "$HOME/.cargo/env"
-        check_status "加载Rust环境变量" "warn"
-        
-        # 验证安装
-        rustc --version
-        check_status "验证Rust安装" "critical"
-        cargo --version
-        check_status "验证Cargo安装" "critical"
-        
-        log "INFO" "Rust安装完成。"
-    fi
-
-    # 3. 安装jq
-    update_step "安装jq"
-    log "INFO" "开始安装jq..."
-
-    if check_dependency jq; then
-        log "INFO" "jq已安装，跳过安装步骤。"
-    else
-        echo -e "${YELLOW}正在安装jq...${NC}"
-        # Ubuntu特有的安装方式
-        sudo apt-get update
-        sudo apt-get install -y jq
-        check_status "安装jq" "critical"
-        
-        # 验证安装
-        jq --version
-        check_status "验证jq安装" "critical"
-        
-        log "INFO" "jq安装完成。"
-    fi
-
-    # 4. 安装sfoundryup
-    update_step "安装sfoundryup"
-    log "INFO" "开始安装sfoundryup..."
-
-    if check_dependency sfoundryup; then
-        log "INFO" "sfoundryup已安装，跳过安装步骤。"
-    else
-        echo -e "${YELLOW}正在安装sfoundryup...${NC}"
-        curl -L -H "Accept: application/vnd.github.v3.raw" \
-             "https://api.github.com/repos/SeismicSystems/seismic-foundry/contents/sfoundryup/install?ref=seismic" | bash
-        check_status "下载并安装sfoundryup" "critical"
-        
-        # 直接添加路径到当前PATH环境变量
-        export PATH="$HOME/.seismic/bin:$PATH"
-        check_status "设置PATH环境变量" "warn"
-        
-        # 验证安装
-        if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
-            log "INFO" "sfoundryup已安装在: $HOME/.seismic/bin/sfoundryup"
+    # 询问用户是否编译GLIBC
+    if ! $AUTO_CONFIRM; then
+        echo -e "${YELLOW}编译GLIBC需要较长时间（约20-40分钟）。${NC}"
+        read -p "是否继续编译GLIBC? (y/n): " confirm
+        if [[ ! $confirm =~ ^[Yy]$ ]]; then
+            echo -e "${RED}中止GLIBC编译，将尝试其他部署方式。${NC}"
+            USE_DOCKER=true
         else
-            log "ERROR" "无法找到sfoundryup可执行文件"
-            check_status "验证sfoundryup安装" "critical"
+            # 用户确认编译GLIBC
+            compile_and_install_glibc
         fi
-        
-        log "INFO" "sfoundryup安装完成。"
-    fi
-
-    # 5. 运行sfoundryup
-    update_step "运行sfoundryup配置环境"
-    log "INFO" "开始运行sfoundryup..."
-
-    echo -e "${YELLOW}正在运行sfoundryup，这可能需要5-60分钟，请耐心等待...${NC}"
-    echo -e "${YELLOW}(注意: 在98%时可能会停顿较长时间，属于正常现象)${NC}"
-
-    # 创建一个函数来运行sfoundryup并处理特定错误
-    run_sfoundryup_safely() {
-        # 保存当前目录
-        local current_dir=$(pwd)
-        
-        # 运行sfoundryup并捕获输出
-        local output
-        if [ -f "$HOME/.seismic/bin/sfoundryup" ]; then
-            output=$("$HOME/.seismic/bin/sfoundryup" 2>&1)
-        else
-            output=$(sfoundryup 2>&1)
-        fi
-        
-        local exit_code=$?
-        
-        # 输出日志以便调试
-        echo "$output" >> "$LOG_FILE"
-        echo "$output"
-        
-        # 检查是否是文件移动错误
-        if echo "$output" | grep -q "mv: 'target/release/sanvil' and '/root/.seismic/bin/sanvil' are the same file"; then
-            log "WARN" "检测到文件移动错误，尝试手动处理..."
-            
-            # 检查sanvil是否存在
-            if [ -f "/root/.seismic/bin/sanvil" ]; then
-                log "INFO" "sanvil文件已存在，跳过移动步骤。"
-                return 0
-            else
-                log "WARN" "无法找到sanvil，尝试手动复制..."
-                
-                # 尝试从编译目录手动复制
-                if [ -f "target/release/sanvil" ]; then
-                    cp -f "target/release/sanvil" "/root/.seismic/bin/"
-                    if [ $? -eq 0 ]; then
-                        log "INFO" "成功手动复制sanvil文件。"
-                        chmod +x "/root/.seismic/bin/sanvil"
-                        return 0
-                    else
-                        log "ERROR" "手动复制sanvil文件失败。"
-                        return 1
-                    fi
-                else
-                    log "ERROR" "找不到源sanvil文件。"
-                    return 1
-                fi
-            fi
-        fi
-        
-        # 对于其他错误，返回原始退出代码
-        return $exit_code
-    }
-
-    # 运行安全版本的sfoundryup
-    run_sfoundryup_safely
-    if [ $? -ne 0 ]; then
-        log "WARN" "使用系统环境运行sfoundryup失败，将尝试使用Docker..."
-        echo -e "${YELLOW}使用系统环境运行sfoundryup失败，将尝试使用Docker...${NC}"
-        USE_DOCKER=true
     else
-        log "INFO" "sfoundryup运行完成。"
+        # 自动确认模式下直接编译
+        compile_and_install_glibc
     fi
+fi
 
-    # 如果强制使用Docker，则跳过后续步骤直接进入Docker流程
-    if $USE_DOCKER; then
-        log "INFO" "即将使用Docker部署..."
-        # 返回安装目录
-        cd "$INSTALL_DIR"
-        
-        # 清理现有进度
-        CURRENT_STEP=2  # 重置步骤计数器
-        
-        # 设置Docker环境
-        update_step "设置Docker环境"
-        setup_docker_fallback
-        
-        # 在Docker中部署
-        update_step "在Docker中部署"
-        deploy_in_docker
-        
-        # 显示100%进度
-        show_progress 100 "Docker部署完成！"
-        echo -e "\n\n${GREEN}${BOLD}全部步骤已完成!${NC}\n"
-        
-        # 显示执行报告并退出
-        cleanup
-        exit 0
-    fi
-
-    # 如果不使用Docker，继续普通流程
-    log "INFO" "sfoundryup运行完成。"
-
-    # 6. 克隆代码仓库
-    update_step "克隆代码仓库"
-    log "INFO" "开始克隆代码仓库..."
-
-    if [ -d "$INSTALL_DIR/try-devnet" ]; then
-        log "WARN" "try-devnet目录已存在，将使用现有目录。"
-    else
-        echo -e "${YELLOW}正在克隆代码仓库...${NC}"
-        git clone --recurse-submodules "$REPO_URL"
-        check_status "克隆代码仓库" "critical"
-        
-        log "INFO" "代码仓库克隆完成。"
-    fi
-
-    # 进入合约目录
-    cd try-devnet/packages/contract/
-    check_status "进入合约目录" "critical"
-
-    # 7. 部署合约
+# 修改原部署合约的部分，使用新编译的GLIBC
+# 在deploy_contract部分添加以下修改
+deploy_contract() {
     update_step "部署加密合约"
     log "INFO" "开始部署加密合约..."
 
     echo -e "${YELLOW}正在部署合约，这可能需要几分钟时间...${NC}"
-    bash script/deploy.sh
+    
+    # 检查是否存在新编译的GLIBC使用脚本
+    if [ -f "$INSTALL_DIR/use-new-glibc.sh" ]; then
+        echo -e "${YELLOW}检测到新编译的GLIBC，将使用它来运行部署脚本...${NC}"
+        "$INSTALL_DIR/use-new-glibc.sh" bash script/deploy.sh
+    else
+        # 使用普通方式运行
+        bash script/deploy.sh
+    fi
     
     # 检查部署状态
     if [ $? -ne 0 ]; then
@@ -663,13 +490,141 @@ else
     else
         log "INFO" "合约部署完成。"
     fi
+}
 
-    # 显示100%进度
-    show_progress 100 "部署完成！"
-    echo -e "\n\n${GREEN}${BOLD}全部步骤已完成!${NC}\n"
+# 函数: 编译和安装更高版本的GLIBC
+compile_and_install_glibc() {
+    local glibc_version="2.34"
+    log "INFO" "开始编译和安装GLIBC $glibc_version..."
+    
+    echo -e "${YELLOW}开始编译和安装GLIBC $glibc_version，这个过程可能需要20-40分钟...${NC}"
+    
+    # 安装必要的编译工具
+    echo -e "${YELLOW}安装编译工具...${NC}"
+    sudo apt-get update
+    sudo apt-get install -y build-essential gawk bison texinfo gettext wget
+    check_status "安装编译工具" "critical"
+    
+    # 创建临时编译目录
+    local compile_dir="$INSTALL_DIR/glibc-build"
+    mkdir -p "$compile_dir"
+    cd "$compile_dir"
+    check_status "创建编译目录" "critical"
+    
+    # 下载GLIBC源码
+    echo -e "${YELLOW}下载GLIBC源码...${NC}"
+    wget -q "https://ftp.gnu.org/gnu/glibc/glibc-$glibc_version.tar.gz"
+    check_status "下载GLIBC源码" "critical"
+    
+    # 解压源码
+    echo -e "${YELLOW}解压源码...${NC}"
+    tar -xzf "glibc-$glibc_version.tar.gz"
+    check_status "解压源码" "critical"
+    
+    # 进入源码目录并创建构建目录
+    cd "glibc-$glibc_version"
+    mkdir -p build
+    cd build
+    check_status "准备构建环境" "critical"
+    
+    # 配置和编译GLIBC
+    echo -e "${YELLOW}配置GLIBC构建...${NC}"
+    ../configure --prefix=/opt/glibc-$glibc_version
+    check_status "配置GLIBC" "critical"
+    
+    echo -e "${YELLOW}编译GLIBC (这可能需要较长时间)...${NC}"
+    make -j$(nproc)
+    check_status "编译GLIBC" "critical"
+    
+    # 安装到指定位置
+    echo -e "${YELLOW}安装GLIBC到/opt/glibc-$glibc_version...${NC}"
+    sudo make install
+    check_status "安装GLIBC" "critical"
+    
+    # 创建使用新GLIBC的脚本
+    echo -e "${YELLOW}创建使用新GLIBC的脚本...${NC}"
+    cat > "$INSTALL_DIR/use-new-glibc.sh" << EOF
+#!/bin/bash
+export LD_LIBRARY_PATH=/opt/glibc-$glibc_version/lib:\$LD_LIBRARY_PATH
+exec "\$@"
+EOF
 
-    # 显示执行报告
-    cleanup
+    chmod +x "$INSTALL_DIR/use-new-glibc.sh"
+    check_status "创建GLIBC使用脚本" "critical"
+    
+    # 返回安装目录
+    cd "$INSTALL_DIR"
+    
+    log "INFO" "GLIBC $glibc_version 编译和安装完成。"
+    echo -e "${GREEN}GLIBC $glibc_version 编译和安装完成。${NC}"
+    echo -e "${YELLOW}现在可以使用 $INSTALL_DIR/use-new-glibc.sh 脚本运行需要新版GLIBC的程序。${NC}"
+    
+    return 0
+}
+
+# 修改主要部署流程，添加GLIBC编译步骤
+# 将这段代码添加到原脚本中的合适位置，例如在检查GLIBC版本后
+check_system_libraries
+if [ $? -ne 0 ]; then
+    # GLIBC版本不满足要求
+    echo -e "${YELLOW}检测到系统GLIBC版本过低，需要编译安装更高版本的GLIBC。${NC}"
+    
+    # 询问用户是否编译GLIBC
+    if ! $AUTO_CONFIRM; then
+        echo -e "${YELLOW}编译GLIBC需要较长时间（约20-40分钟）。${NC}"
+        read -p "是否继续编译GLIBC? (y/n): " confirm
+        if [[ ! $confirm =~ ^[Yy]$ ]]; then
+            echo -e "${RED}中止GLIBC编译，将尝试其他部署方式。${NC}"
+            USE_DOCKER=true
+        else
+            # 用户确认编译GLIBC
+            compile_and_install_glibc
+        fi
+    else
+        # 自动确认模式下直接编译
+        compile_and_install_glibc
+    fi
 fi
+
+# 修改原部署合约的部分，使用新编译的GLIBC
+# 在deploy_contract部分添加以下修改
+deploy_contract() {
+    update_step "部署加密合约"
+    log "INFO" "开始部署加密合约..."
+
+    echo -e "${YELLOW}正在部署合约，这可能需要几分钟时间...${NC}"
+    
+    # 检查是否存在新编译的GLIBC使用脚本
+    if [ -f "$INSTALL_DIR/use-new-glibc.sh" ]; then
+        echo -e "${YELLOW}检测到新编译的GLIBC，将使用它来运行部署脚本...${NC}"
+        "$INSTALL_DIR/use-new-glibc.sh" bash script/deploy.sh
+    else
+        # 使用普通方式运行
+        bash script/deploy.sh
+    fi
+    
+    # 检查部署状态
+    if [ $? -ne 0 ]; then
+        log "ERROR" "使用系统环境部署合约失败，尝试使用Docker作为备选方案..."
+        echo -e "${RED}使用系统环境部署合约失败，尝试使用Docker作为备选方案...${NC}"
+        
+        # 返回安装目录
+        cd "$INSTALL_DIR"
+        
+        # 设置Docker环境
+        setup_docker_fallback
+        
+        # 在Docker中部署
+        deploy_in_docker
+    else
+        log "INFO" "合约部署完成。"
+    fi
+}
+
+# 显示执行报告
+show_report
+
+# 函数: 清理资源
+cleanup
 
 exit 0
