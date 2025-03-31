@@ -246,14 +246,14 @@ echo -e "6. 部署加密合约"
 echo
 
 # 确认开始
-if ! $AUTO_CONFIRM; then
-    echo -e "${YELLOW}准备开始安装和部署过程，此操作可能需要较长时间。${NC}"
-    read -p "是否继续？(y/n): " confirm
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        echo -e "${RED}操作已取消。${NC}"
-        exit 0
-    fi
-fi
+# if ! $AUTO_CONFIRM; then
+#     echo -e "${YELLOW}准备开始安装和部署过程，此操作可能需要较长时间。${NC}"
+#     read -p "是否继续？(y/n): " confirm
+#     if [[ ! $confirm =~ ^[Yy]$ ]]; then
+#         echo -e "${RED}操作已取消。${NC}"
+#         exit 0
+#     fi
+# fi
 
 # 检查并创建安装目录
 if [ ! -d "$INSTALL_DIR" ]; then
